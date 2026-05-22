@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /mnt/c/Users/Yaska/openmcp && cat package.json | grep tauri)"
+    ]
+  }
+}
