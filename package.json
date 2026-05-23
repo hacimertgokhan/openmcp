@@ -1,6 +1,6 @@
 {
   "name": "openmcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "Desktop and CLI manager for OpenCode MCP servers.",

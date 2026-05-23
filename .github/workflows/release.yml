@@ -1,0 +1,119 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-22.04
+            binary_path: src-tauri/target/release/openmcp
+            package_name: openmcp-linux.tar.gz
+          - name: macos
+            os: macos-latest
+            binary_path: src-tauri/target/release/openmcp
+            package_name: openmcp-macos.tar.gz
+          - name: windows
+            os: windows-latest
+            binary_path: src-tauri/target/release/openmcp.exe
+            package_name: openmcp-windows.zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Tauri app
+        run: npm run tauri build -- --no-bundle
+
+      - name: Package Unix build
+        if: matrix.os != 'windows-latest'
+        env:
+          BINARY_PATH: ${{ matrix.binary_path }}
+          PACKAGE_NAME: ${{ matrix.package_name }}
+        run: |
+          mkdir -p release
+          cp "$BINARY_PATH" release/openmcp
+          cp -R dist release/dist
+          tar -czf "$PACKAGE_NAME" -C release .
+
+      - name: Package Windows build
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        env:
+          BINARY_PATH: ${{ matrix.binary_path }}
+          PACKAGE_NAME: ${{ matrix.package_name }}
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item $env:BINARY_PATH release/openmcp.exe
+          Copy-Item dist release/dist -Recurse
+          Compress-Archive -Path release/* -DestinationPath $env:PACKAGE_NAME -Force
+
+      - name: Upload packaged build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.package_name }}
+          if-no-files-found: error
+
+  release:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read package version
+        id: version
+        run: echo "tag=v$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
+
+      - name: Download builds
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: OpenMCP ${{ steps.version.outputs.tag }}
+          body: Automated build from commit ${{ github.sha }}.
+          prerelease: true
+          make_latest: false
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
